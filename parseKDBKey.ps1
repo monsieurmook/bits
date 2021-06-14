@@ -9,6 +9,7 @@ Add-Type -AssemblyName System.Security
 $fileName = $Args[0]
 $separator = " "
 $encryptedBytes = [IO.File]::ReadAllText($fileName).Split($separator,5) | Select-Object -Last 1
+Write-Host ('parseKDBKey.ps1 c:\users\username\directory\intellij\c.pwd')
 
 Write-Host ('c.pwd file contents')
 Write-Host ('Protected Bytes: ' + $encryptedBytes)
@@ -52,7 +53,6 @@ $AESPassword = (80, 114, 111, 120, 121, 32, 67, 111, 110, 102, 105, 103, 32, 83,
 Write-Host ('AESPassword: ' + $AESPassword)
 $AESIV = $unprotectedBytes[4..19]
 Write-Host ('AES256 IV: ' + $AESIV)
-$unprotectedBytes = $unprotectedBytes
 Write-Host ('AES Encrypted Data: ' + $unprotectedBytes)
 
 #this is the original 512 bytes of securerandom that consitutes the master key
@@ -66,7 +66,3 @@ $KdbxKey = [system.Text.Encoding]::UTF8.GetBytes($MasterKey)
 $hasher = [System.Security.Cryptography.HashAlgorithm]::Create('sha256')
 $KdbxKey = $hasher.ComputeHash($hasher.ComputeHash($KdbxKey))
 Write-Host ('KeePass DB Key: ' + $KdbxKey)
-
-
-
-

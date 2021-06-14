@@ -28,8 +28,8 @@ function Create-AesManagedObject($key, $IV) {
     $aesManaged.Padding = [System.Security.Cryptography.PaddingMode]::Zeros
     $aesManaged.BlockSize = 128
     $aesManaged.KeySize = 256
-	$aesManaged.IV = $IV
-	$aesManaged.Key = $key
+    $aesManaged.IV = $IV
+    $aesManaged.Key = $key
     $aesManaged
 }
 
@@ -38,9 +38,9 @@ function Decrypt-String($key, $iv, $encryptedString) {
     $decryptor = $aesManaged.CreateDecryptor();
     $unencryptedData = $decryptor.TransformFinalBlock($encryptedString, 20, $encryptedString.Length - 20);
     $aesManaged.Dispose()
-	#trim the padding 5 ints, it'll always be 5 bytes of 5 because the key will always be 512 bytes long and base64 encoding will produce a static length output for input of the same size...
+    #trim the padding 5 ints, it'll always be 5 bytes of 5 because the key will always be 512 bytes long and base64 encoding will produce a static length output for input of the same size...
     $MasterKey = [System.Text.Encoding]::UTF8.GetString($unencryptedData).Trim([char]5)
-	return $MasterKey
+    return $MasterKey
 }
 
 Write-Host ('')

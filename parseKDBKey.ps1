@@ -1,12 +1,15 @@
 #Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 #https://github.com/JetBrains/intellij-community/blob/0e2aa4030ee763c9b0c828f0b5119f4cdcc66f35/platform/credential-store/src/keePass/masterKey.kt
 #AES( DPAPI(KDBXkey)[iv len, iv, data], hard coded key)
+Write-Host ('parseKDBKey.ps1 c:\users\username\directory\intellij\c.pwd c:\users\username\directory\intellij\c.kdbx')
 
 Add-Type -AssemblyName System.Security
 
 #fetch encrypted master password file, split on base64, convert
 #$fileName = $env:APPDATA + "\JetBrains\PyCharm2021.1\c.pwd"
 $fileName = $Args[0]
+$fileName2 = $Args[1]
+
 $separator = " "
 $encryptedBytes = [IO.File]::ReadAllText($fileName).Split($separator,5) | Select-Object -Last 1
 Write-Host ('parseKDBKey.ps1 c:\users\username\directory\intellij\c.pwd')
@@ -28,8 +31,8 @@ function Create-AesManagedObject($key, $IV) {
     $aesManaged.Padding = [System.Security.Cryptography.PaddingMode]::Zeros
     $aesManaged.BlockSize = 128
     $aesManaged.KeySize = 256
-    $aesManaged.IV = $IV
-    $aesManaged.Key = $key
+	$aesManaged.IV = $IV
+	$aesManaged.Key = $key
     $aesManaged
 }
 
@@ -38,9 +41,9 @@ function Decrypt-String($key, $iv, $encryptedString) {
     $decryptor = $aesManaged.CreateDecryptor();
     $unencryptedData = $decryptor.TransformFinalBlock($encryptedString, 20, $encryptedString.Length - 20);
     $aesManaged.Dispose()
-    #trim the padding 5 ints, it'll always be 5 bytes of 5 because the key will always be 512 bytes long and base64 encoding will produce a static length output for input of the same size...
+	#trim the padding 5 ints, it'll always be 5 bytes of 5 because the key will always be 512 bytes long and base64 encoding will produce a static length output for input of the same size...
     $MasterKey = [System.Text.Encoding]::UTF8.GetString($unencryptedData).Trim([char]5)
-    return $MasterKey
+	return $MasterKey
 }
 
 Write-Host ('')
@@ -66,3 +69,42 @@ $KdbxKey = [system.Text.Encoding]::UTF8.GetBytes($MasterKey)
 $hasher = [System.Security.Cryptography.HashAlgorithm]::Create('sha256')
 $KdbxKey = $hasher.ComputeHash($hasher.ComputeHash($KdbxKey))
 Write-Host ('KeePass DB Key: ' + $KdbxKey)
+
+Write-Host ('')
+Write-Host ('KeePass DB Header')
+
+$KeePassDB = [System.IO.File]::ReadAllBytes($fileName2)
+
+$MASTER_SEED = $KeePassDB[41..72]
+Write-Host ('MASTER_SEED: ' + $MASTER_SEED)
+
+$TRANSFORM_SEED = $KeePassDB[76..107]
+Write-Host ('TRANSFORM_SEED: ' + $TRANSFORM_SEED)
+
+$TRANSFORM_ROUNDS = [bitconverter]::ToInt64($KeePassDB[111..118],0)
+Write-Host ('TRANSFORM_ROUNDS: ' + $TRANSFORM_ROUNDS)
+
+$ENCRYPTION_IV = $KeePassDB[122..137]
+Write-Host ('ENCRYPTION_IV: ' + $ENCRYPTION_IV)
+
+$PROTECTED_STREAM_KEY = $KeePassDB[141..172]
+Write-Host ('PROTECTED_STREAM_KEY: ' + $PROTECTED_STREAM_KEY)
+
+#everything that follows this is TODO
+#src/kdbx/KdbxHeader.kt
+#https://gist.github.com/lgg/e6ccc6e212d18dd2ecd8a8c116fb1e45
+#$aesManaged.Padding = [System.Security.Cryptography.PaddingMode]::Zeros
+$AESEngine = new-Object System.Security.Cryptography.RijndaelManaged
+$AESEngine.Mode = [System.Security.Cryptography.CipherMode]::ECB;
+for($i = 0; $i -lt $TRANSFORM_ROUNDS; $i++){
+	$keyBytes = (new-Object Security.Cryptography.Rfc2898DeriveBytes $KdbxKey, $TRANSFORM_SEED, $TRANSFORM_ROUNDS).GetBytes(256 / 8);
+}
+Write-Host ('keyBytes: ' + $keyBytes)
+
+$hasher = [System.Security.Cryptography.HashAlgorithm]::Create('sha256')
+$transformedKeyDigest = $hasher.ComputeHash($keyBytes)
+Write-Host ('transformedKeyDigest: ' + $transformedKeyDigest)
+
+$hasher = [System.Security.Cryptography.HashAlgorithm]::Create('sha256')
+$CompoundKey = $hasher.ComputeHash($keyBytes + $MASTER_SEED + $transformedKeyDigest)
+Write-Host ('Compound Key: ' + $CompoundKey)

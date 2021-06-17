@@ -1,7 +1,6 @@
 #Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 #https://github.com/JetBrains/intellij-community/blob/0e2aa4030ee763c9b0c828f0b5119f4cdcc66f35/platform/credential-store/src/keePass/masterKey.kt
 #AES( DPAPI(KDBXkey)[iv len, iv, data], hard coded key)
-Write-Host ('parseKDBKey.ps1 c:\users\username\directory\intellij\c.pwd c:\users\username\directory\intellij\c.kdbx')
 
 Add-Type -AssemblyName System.Security
 
@@ -25,6 +24,7 @@ Write-Host ('Unprotected Data: ' + $unprotectedBytes)
 
 #val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
 #no support for PKCS5, so we set padding to None/Zeros and strip them from the output in Decrypt-String
+#https://gist.github.com/ctigeek/2a56648b923d198a6e60
 function Create-AesManagedObject($key, $IV) {
     $aesManaged = New-Object "System.Security.Cryptography.AesManaged"
     $aesManaged.Mode = [System.Security.Cryptography.CipherMode]::CBC
@@ -43,7 +43,17 @@ function Decrypt-String($key, $iv, $encryptedString) {
     $aesManaged.Dispose()
 	#trim the padding 5 ints, it'll always be 5 bytes of 5 because the key will always be 512 bytes long and base64 encoding will produce a static length output for input of the same size...
     $MasterKey = [System.Text.Encoding]::UTF8.GetString($unencryptedData).Trim([char]5)
+	$aesManaged.Dispose()
 	return $MasterKey
+}
+
+function Encrypt-String($key, $unencryptedBytes) {
+    $aesManaged = Create-AesManagedObject $key
+    $encryptor = $aesManaged.CreateEncryptor()
+    $encryptedData = $encryptor.TransformFinalBlock($unencryptedBytes, 0, $unencryptedBytes.Length);
+    #[byte[]] $fullData = $aesManaged.IV + $encryptedData
+    $aesManaged.Dispose()
+    [System.Convert]::ToBase64String($fullData)
 }
 
 Write-Host ('')
@@ -87,24 +97,33 @@ Write-Host ('TRANSFORM_ROUNDS: ' + $TRANSFORM_ROUNDS)
 $ENCRYPTION_IV = $KeePassDB[122..137]
 Write-Host ('ENCRYPTION_IV: ' + $ENCRYPTION_IV)
 
+
 $PROTECTED_STREAM_KEY = $KeePassDB[141..172]
 Write-Host ('PROTECTED_STREAM_KEY: ' + $PROTECTED_STREAM_KEY)
 
-#everything that follows this is TODO
 #src/kdbx/KdbxHeader.kt
 #https://gist.github.com/lgg/e6ccc6e212d18dd2ecd8a8c116fb1e45
-#$aesManaged.Padding = [System.Security.Cryptography.PaddingMode]::Zeros
-$AESEngine = new-Object System.Security.Cryptography.RijndaelManaged
-$AESEngine.Mode = [System.Security.Cryptography.CipherMode]::ECB;
+
+#AES tseed as key
+$aesManaged = New-Object "System.Security.Cryptography.AesManaged"
+$aesManaged.Mode = [System.Security.Cryptography.CipherMode]::ECB
+$aesManaged.Padding = [System.Security.Cryptography.PaddingMode]::Zeros
+$aesManaged.BlockSize = 128
+$aesManaged.KeySize = 256
+$aesManaged.Key = $TRANSFORM_SEED
+$encryptor = $aesManaged.CreateEncryptor()
+$TransformedKey = $KdbxKey
+
 for($i = 0; $i -lt $TRANSFORM_ROUNDS; $i++){
-	$keyBytes = (new-Object Security.Cryptography.Rfc2898DeriveBytes $KdbxKey, $TRANSFORM_SEED, $TRANSFORM_ROUNDS).GetBytes(256 / 8);
+  $TransformedKey = $encryptor.TransformFinalBlock($TransformedKey, 0, $TransformedKey.Length);
 }
-Write-Host ('keyBytes: ' + $keyBytes)
+$aesManaged.Dispose()
+$hasher = [System.Security.Cryptography.HashAlgorithm]::Create('sha256')
+$TransformedKeyDigest = $hasher.ComputeHash($TransformedKey)
+
+Write-Host ('Transformed Key Digest: ' + $TransformedKeyDigest)
 
 $hasher = [System.Security.Cryptography.HashAlgorithm]::Create('sha256')
-$transformedKeyDigest = $hasher.ComputeHash($keyBytes)
-Write-Host ('transformedKeyDigest: ' + $transformedKeyDigest)
+$CompoundKey = $hasher.ComputeHash($MASTER_SEED + $TransformedKeyDigest)
 
-$hasher = [System.Security.Cryptography.HashAlgorithm]::Create('sha256')
-$CompoundKey = $hasher.ComputeHash($keyBytes + $MASTER_SEED + $transformedKeyDigest)
 Write-Host ('Compound Key: ' + $CompoundKey)

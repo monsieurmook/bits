@@ -11,7 +11,8 @@ $fileName2 = $Args[1]
 
 $separator = " "
 $encryptedBytes = [IO.File]::ReadAllText($fileName).Split($separator,5) | Select-Object -Last 1
-Write-Host ('parseKDBKey.ps1 c:\users\username\directory\intellij\c.pwd')
+Write-Host ('usage:')
+Write-Host ('parseKDBKey.ps1 c:\users\username\directory\intellij\c.pwd c:\users\username\directory\intellij\c.kdbx')
 
 Write-Host ('c.pwd file contents')
 Write-Host ('Protected Bytes: ' + $encryptedBytes)
@@ -38,13 +39,33 @@ function Create-AesManagedObject($key, $IV) {
 
 function Decrypt-String($key, $iv, $encryptedString) {
     $aesManaged = Create-AesManagedObject $key $iv
-    $decryptor = $aesManaged.CreateDecryptor();
+    $decryptor = $aesManaged.CreateDecryptor()
     $unencryptedData = $decryptor.TransformFinalBlock($encryptedString, 20, $encryptedString.Length - 20);
-    $aesManaged.Dispose()
 	#trim the padding 5 ints, it'll always be 5 bytes of 5 because the key will always be 512 bytes long and base64 encoding will produce a static length output for input of the same size...
     $MasterKey = [System.Text.Encoding]::UTF8.GetString($unencryptedData).Trim([char]5)
 	$aesManaged.Dispose()
 	return $MasterKey
+}
+
+function Create-AesManagedObject2($key, $IV) {
+    $aesManaged = New-Object "System.Security.Cryptography.AesManaged"
+    $aesManaged.Mode = [System.Security.Cryptography.CipherMode]::CBC
+    $aesManaged.Padding = [System.Security.Cryptography.PaddingMode]::None
+    $aesManaged.BlockSize = 128
+    $aesManaged.KeySize = 256
+	$aesManaged.IV = $IV
+	$aesManaged.Key = $key
+    $aesManaged
+}
+
+function Decrypt-String2($key, $iv, $encryptedString) {
+    $aesManaged = Create-AesManagedObject2 $key $iv
+    $decryptor = $aesManaged.CreateDecryptor()
+	Write-Host ('$encryptedString.Length ' + $encryptedString.Length)
+    $unencryptedData = $decryptor.TransformFinalBlock($encryptedString, 0, $encryptedString.Length-1);
+    $aesManaged.Dispose()
+    #$MasterKey = [System.Text.Encoding]::UTF8.GetString($unencryptedData)
+	return $unencryptedData
 }
 
 function Encrypt-String($key, $unencryptedBytes) {
@@ -54,6 +75,18 @@ function Encrypt-String($key, $unencryptedBytes) {
     #[byte[]] $fullData = $aesManaged.IV + $encryptedData
     $aesManaged.Dispose()
     [System.Convert]::ToBase64String($fullData)
+}
+
+function Get-DecompressedByteArray($byteArray){
+	$input = New-Object System.IO.MemoryStream(,$byteArray)
+	$output = New-Object System.IO.MemoryStream
+	$gzipStream = New-Object System.IO.Compression.GzipStream $input, ([IO.Compression.CompressionMode]::Decompress)
+	$gzipStream.CopyTo( $output )
+	$gzipStream.Close()
+	$input.Close()
+	$output.Close()
+	[byte[]] $byteOutArray = $output.ToArray()
+	$byteOutArray
 }
 
 Write-Host ('')
@@ -115,7 +148,7 @@ $encryptor = $aesManaged.CreateEncryptor()
 $TransformedKey = $KdbxKey
 
 for($i = 0; $i -lt $TRANSFORM_ROUNDS; $i++){
-  $TransformedKey = $encryptor.TransformFinalBlock($TransformedKey, 0, $TransformedKey.Length);
+	$TransformedKey = $encryptor.TransformFinalBlock($TransformedKey, 0, $TransformedKey.Length);
 }
 $aesManaged.Dispose()
 $hasher = [System.Security.Cryptography.HashAlgorithm]::Create('sha256')
@@ -127,3 +160,21 @@ $hasher = [System.Security.Cryptography.HashAlgorithm]::Create('sha256')
 $CompoundKey = $hasher.ComputeHash($MASTER_SEED + $TransformedKeyDigest)
 
 Write-Host ('Compound Key: ' + $CompoundKey)
+$KeePassDBContents = $KeePassDB[217..1113]#($KeePassDB.length - 1)
+
+$KeePassDBContents = Decrypt-String2 $CompoundKey $ENCRYPTION_IV $KeePassDBContents
+Write-Host ('KeePassDBContentsDecrypted: ' + $KeePassDBContents)
+$STREAM_START_BYTES = $KeePassDBContents[0..32]
+$BLOCK_ID	=	[bitconverter]::ToInt32($KeePassDBContents[32..35],0)
+$BLOCK_HASH = $KeePassDBContents[36..67]
+$DATA_SIZE = [bitconverter]::ToInt16($KeePassDBContents[68..72],0)
+$BLOCK_DATA = $KeePassDBContents[72..(72 + $DATA_SIZE)]
+
+Write-Host ('Block Hash: ' + $BLOCK_HASH)
+Write-Host ('Block Size: ' + $DATA_SIZE)
+Write-Host ('Block DATA: ' + $BLOCK_DATA)
+
+$BlockContents = Get-DecompressedByteArray($BLOCK_DATA)
+Write-Host ('Block Contents: ' + $BlockContents)
+
+$SALSA20_IV = (-24, 48, 9, 75, -105, 32, 93, 42)

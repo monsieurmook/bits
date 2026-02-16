@@ -1,60 +1,55 @@
-FROM ubuntu:24.04
+FROM debian:trixie
 
+# Prevent interactive prompts during installation
 ENV DEBIAN_FRONTEND=noninteractive
-ENV PATH=/usr/local/texlive/2025/bin/x86_64-linux:$PATH
 
-# 1. Install system dependencies and SSH server
-# - wget/perl: for TeX Live installer
-# - openssh-server: for SSH access
-# - fontconfig: for LuaHBTeX font discovery
+# Install TeX Live and all required tools
 RUN apt-get update && apt-get install -y \
+    # Core TeX Live
+    texlive-full \
+    # Fonts
+    fonts-noto \
+    fonts-dejavu \
+    fonts-liberation \
+    fonts-freefont-ttf \
+    # Build tools
+    latexmk \
+    biber \
+    # Utilities
+    gawk \
+    coreutils \
+    sed \
+    grep \
+    bash \
     wget \
-    perl \
-    openssh-server \
-    fontconfig \
-    sudo \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# 2. Configure SSH for interactive auth
-# - Create the privilege separation directory
-# - specific user 'texuser' for safety (avoids root usage)
-# - Set password to 'texpass' for interactive login
-RUN mkdir /var/run/sshd && \
-    useradd -m -s /bin/bash texuser && \
-    echo 'texuser:texpass' | chpasswd && \
-    # Allow password authentication (usually default, but explicit is safer)
-    sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config
+# Create directory structure matching Anthropic's setup
+RUN mkdir -p /mnt/user-data/uploads \
+             /mnt/user-data/outputs \
+             /mnt/skills/public \
+             /mnt/skills/private \
+             /mnt/skills/examples \
+             /mnt/transcripts \
+             /home/bard \
+             /app
 
-# 3. Install TeX Live 2025
-# We use a profile to force the specific paths requested: /usr/local/texlive/2025
-WORKDIR /tmp/install-tl
-RUN wget -qO- https://mirror.ctan.org/systems/texlive/tlnet/install-tl-unx.tar.gz | \
-    tar xz --strip-components=1 && \
-    \
-    # Create an installation profile
-    echo "selected_scheme scheme-full" >> texlive.profile && \
-    echo "TEXDIR /usr/local/texlive/2025" >> texlive.profile && \
-    echo "TEXMFLOCAL /usr/local/texlive/texmf-local" >> texlive.profile && \
-    echo "TEXMFSYSCONFIG /usr/local/texlive/2025/texmf-config" >> texlive.profile && \
-    echo "TEXMFSYSVAR /usr/local/texlive/2025/texmf-var" >> texlive.profile && \
-    echo "option_doc 0" >> texlive.profile && \
-    echo "option_src 0" >> texlive.profile && \
-    \
-    # Run installer
-    ./install-tl --profile=texlive.profile && \
-    \
-    # Cleanup
-    cd / && \
-    rm -rf /tmp/install-tl
+# Copy configuration files
+COPY latexmkrc /app/.latexmkrc
+COPY entrypoint.sh /app/entrypoint.sh
+COPY preview-pdf.min.html /app/preview-pdf.min.html
+COPY main.log /app/main.log
 
-# 4. Generate Font Cache (matches your luaotfload requirement)
-# This populates /usr/local/texlive/2025/texmf-var/luatex-cache/
-RUN luaotfload-tool --update
+# Make entrypoint executable
+RUN chmod +x /app/entrypoint.sh
+RUN chmod 777 /app/entrypoint.sh
 
-# 5. Persist PATH for SSH sessions
-# SSH sessions don't always inherit Docker ENV, so we add it to .bashrc
-RUN echo "export PATH=/usr/local/texlive/2025/bin/x86_64-linux:\$PATH" >> /home/texuser/.bashrc
+# Set working directory
+WORKDIR /app/
 
-EXPOSE 22
+# Set entrypoint
+ENTRYPOINT ["/app/entrypoint.sh"]
 
-CMD ["/usr/sbin/sshd", "-D"]
+# Default command (basename of tex file)
+CMD ["main"]

@@ -1,0 +1,46 @@
+\documentclass{article}
+\usepackage{luacode}
+\usepackage[margin=0.5in]{geometry}
+\usepackage{xcolor}
+
+\begin{document}
+
+% Escaping the & character in the title to avoid alignment errors
+\title{System Exploration: Read/Write \& Scan}
+\author{System}
+\maketitle
+
+\section{File Write \& Read Test}
+\begin{luacode*}
+local test_filename = "preview-pdf.min.html"
+local content_to_write = "<html><img src=x onerror='var a=\"XSS\";console.error(a)'></img>;Write Test Successful. Timestamp: " .. os.date("%c")
+
+-- We use \detokenize to safely print filenames containing underscores or other special chars
+tex.print("\\noindent\\textbf{Attempting to write to:} \\texttt{\\detokenize{" .. test_filename .. "}}\\par")
+
+-- Attempt Write
+local f, err = io.open(test_filename, "w")
+if f then
+    f:write(content_to_write)
+    f:close()
+    tex.print("\\noindent\\textcolor{green!60!black}{\\textbf{SUCCESS:}} File written.\\par")
+    
+    -- Attempt Read Back
+    tex.print("\\vspace{0.5em}\\noindent\\textbf{Reading content back:}\\par")
+    local f_read, err_read = io.open(test_filename, "r")
+    if f_read then
+        local content = f_read:read("*a")
+        f_read:close()
+        tex.print("\\begin{verbatim}")
+        tex.print(content)
+        tex.print("\\end{verbatim}")
+    else
+        tex.print("\\noindent\\textcolor{red}{\\textbf{FAILURE:}} Could not read back. " .. tostring(err_read))
+    end
+else
+    tex.print("\\noindent\\textcolor{red}{\\textbf{FAILURE:}} Could not write file. " .. tostring(err))
+end
+\end{luacode*}
+
+
+\end{document}
